@@ -6,19 +6,21 @@
  */
 
 #include <stdint.h>
+#include <inttypes.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
 #define MAGIC 0x95DACFDC
 
-void find_collision (uint32_t *bcode, uint64_t desired_checksum, uint16_t starthword);
+bool find_collision (uint32_t *bcode, uint64_t desired_checksum, uint16_t starthword);
 static inline uint64_t checksum_helper (uint64_t op1, uint64_t op2, uint64_t op3);
 
 int main (int argc, char *argv[]) {
     // If arguments not adequate
-    if (argc != 4) {
-        printf("Usage: bootcsumr <rom file> <checksum to search for> <starting hword>\n"); 
+    if (argc != 5) {
+        printf("Usage: bootcsumr <rom file> <checksum to search for> <starting hword> <hword stride>\n"); 
         return 0;
     }
     
@@ -38,8 +40,14 @@ int main (int argc, char *argv[]) {
 
     uint64_t checksum = strtol(argv[2], NULL, 0);
     uint16_t starthword = strtol(argv[3], NULL, 0);
+    uint16_t stride = strtol(argv[4], NULL, 0);
 
-    find_collision(&rom_buffer[0x10], checksum, starthword);
+    while (!find_collision(&rom_buffer[0x10], checksum, starthword)) {
+      if (UINT16_MAX - starthword < stride) {
+        break;
+      }
+      starthword += stride;
+    }
 
     return 0;
 } 
@@ -68,7 +76,7 @@ static inline uint64_t checksum_helper (uint64_t op1, uint64_t op2, uint64_t op3
 /*
  * Try to find checksum collision 
  */ 
-void find_collision (uint32_t *bcode, uint64_t desired_checksum, uint16_t starthword) {
+bool find_collision (uint32_t *bcode, uint64_t desired_checksum, uint16_t starthword) {
     // Store starting hword into bootcode
     bcode[0x3ee] = (bcode[0x3ee] & 0xffff0000) | starthword;
 
@@ -152,7 +160,12 @@ void find_collision (uint32_t *bcode, uint64_t desired_checksum, uint16_t starth
     }
 
     // Now let's try everything for the last word
+    uint32_t half_matches = 0;
     for (uint64_t word = 0;; word ++) {
+        if ((word & 0xffffff) == 0) {
+          printf("\r%04x: %"PRIx64" (%2.2f%%) (%d)", starthword, word, (double)word / (double)UINT64_C(0x100000000) * 100.0, half_matches);
+          fflush(stdout);
+        }
         // Copy preframe over
         memcpy(&frame, &preframe, sizeof(frame));
 
@@ -227,59 +240,59 @@ void find_collision (uint32_t *bcode, uint64_t desired_checksum, uint16_t starth
         sframe[2] = frame[0];
         sframe[3] = frame[0];
     
-        uint32_t *frame_word_ptr = &frame[0];
-        uint32_t frame_word;
-
-        //First calculate sframe 2 and 3, they are independent and allow for faster checking
-        for (uint32_t frame_number = 0; frame_number != 0x10; frame_number ++) {
-            // Updates
-            frame_word = *frame_word_ptr;
-    
-            // Calculations   
-            if (((frame_word & 0x02) >> 1) == (frame_word & 0x01)) {
-                sframe[2] += frame_word;
+        //First calculate sframe 0 and 1, they are independent and allow for faster checking
+        for (uint32_t frame_number = 0; frame_number < 0x10; frame_number ++) {
+            uint32_t frame_word = frame[frame_number];
+              
+            sframe[0] += ((frame_word << (0x20 - frame_word & 0x1f)) | frame_word >> (frame_word & 0x1f));
+  
+            if (frame_word < sframe[0]) {
+                sframe[1] += frame_word;
             }
             else {
-                sframe[2] = checksum_helper(sframe[2], frame_word, frame_number);
+                sframe[1] = checksum_helper(sframe[1], frame_word, 0);
             }
-    
-            if (frame_word & 0x01 == 1) {
-                sframe[3] ^= frame_word;
-            }
-            else {
-                sframe[3] = checksum_helper(sframe[3], frame_word, frame_number);
-            }
-    
-            frame_word_ptr ++;
-        }
-
+         }
         
-        // If high part of checksum matches continue to calculate sframe 1 and 0
-        if ((sframe[2] ^ sframe[3]) == (desired_checksum & 0xffffffff)) {
-            uint32_t *frame_word_ptr = &frame[0];
-            
-            for (uint32_t frame_number = 0; frame_number != 0x10; frame_number ++) {
-                frame_word = *frame_word_ptr;
-                
-                sframe[0] += ((frame_word << (0x20 - frame_word & 0x1f)) | frame_word >> (frame_word & 0x1f));
-      
-                if (frame_word < sframe[0]) {
-                    sframe[1] += frame_word;
-                }
-                else {
-                    sframe[1] = checksum_helper(sframe[1], frame_word, 0);
-                }
+        // If low part of checksum matches continue to calculate sframe 2 and 3
+        if ((checksum_helper(sframe[0], sframe[1], 0x10) & 0xffff) == (desired_checksum >> 32)) {
+            half_matches ++;
 
-                frame_word_ptr ++;
+            //printf("%08x\n", (uint32_t)word);
+
+            for (uint32_t frame_number = 0; frame_number < 0x10; frame_number ++) {
+              // Updates
+              uint32_t frame_word = frame[frame_number];
+
+              // Calculations   
+              switch (frame_word & 3) {
+                case 0:
+                case 3:
+                  sframe[2] += frame_word;
+                  break;
+                case 1:
+                case 2:
+                  sframe[2] = checksum_helper(sframe[2], frame_word, frame_number);
+                  break;
+              }
+
+              if (frame_word & 0x01 == 1) {
+                sframe[3] ^= frame_word;
+              }
+              else {
+                sframe[3] = checksum_helper(sframe[3], frame_word, frame_number);
+              }
             }
-            
+            //printf("%08x\n", sframe[2] ^ sframe[3]);
+           
             // Now check if it matches the checksum
-            if ((checksum_helper(sframe[0], sframe[1], 0x10) & 0xffff) == (desired_checksum >> 32)) {
+            if ((sframe[2] ^ sframe[3]) == (desired_checksum & 0xffffffff)) {
+                printf("\n");
                 printf("COLLISION FOUND! Please notify developers.\n");
                 printf("Starthword: %x\n", starthword);
-                printf("Word: %llx\n", word);
+                printf("Word: %" PRIx64 "\n", word);
             
-                return;
+                return true;
             }
         }
         
@@ -287,4 +300,5 @@ void find_collision (uint32_t *bcode, uint64_t desired_checksum, uint16_t starth
         if (word == 0xFFFFFFFF) break;
     }
 
+    return false;
 }
