@@ -27,7 +27,7 @@ int main (int argc, char *argv[]) {
     FILE* rom_file;
 
     uint32_t rom_buffer[0x1000 / sizeof(uint32_t)];
-    rom_file = fopen(argv[1], "r");
+    rom_file = fopen(argv[1], "rb");
     fread(rom_buffer, sizeof(uint32_t), 0x1000 / sizeof(uint32_t), rom_file);
     fclose(rom_file); 
 
@@ -38,7 +38,7 @@ int main (int argc, char *argv[]) {
         rom_buffer[i]  = be;
     }
 
-    uint64_t checksum = strtol(argv[2], NULL, 0);
+    uint64_t checksum = strtoll(argv[2], NULL, 0);
     uint16_t starthword = strtol(argv[3], NULL, 0);
     uint16_t stride = strtol(argv[4], NULL, 0);
 
@@ -289,7 +289,7 @@ bool find_collision (uint32_t *bcode, uint64_t desired_checksum, uint16_t starth
             if ((sframe[2] ^ sframe[3]) == (desired_checksum & 0xffffffff)) {
                 printf("\n");
                 printf("COLLISION FOUND! Please notify developers.\n");
-                printf("Starthword: %x\n", starthword);
+                printf("Starthword: %" PRIx16 "\n", starthword);
                 printf("Word: %" PRIx64 "\n", word);
             
                 return true;

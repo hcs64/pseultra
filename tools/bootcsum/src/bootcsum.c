@@ -24,7 +24,7 @@ int main (int argc, char *argv[]) {
     FILE* rom_file;
 
     uint32_t rom_buffer[0x1000 / sizeof(uint32_t)];
-    rom_file = fopen(argv[1], "r");
+    rom_file = fopen(argv[1], "rb");
     fread(rom_buffer, sizeof(uint32_t), 0x1000 / sizeof(uint32_t), rom_file);
     fclose(rom_file); 
 
@@ -46,7 +46,7 @@ int main (int argc, char *argv[]) {
     
     if (argc == 3) {
         // Verification
-        uint64_t expected_checksum = strtol(argv[2], NULL, 0);
+        uint64_t expected_checksum = strtoll(argv[2], NULL, 0);
         uint64_t checksum = calculate_checksum(&rom_buffer[0x10]); 
        
         if (checksum == expected_checksum) {
